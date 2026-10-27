@@ -19,6 +19,9 @@ services:
       timeout: 5s
       retries: 5
 
+    networks:
+      - swiggy-network
+
   backend:
     build:
       context: ./backend
@@ -40,6 +43,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+    networks:
+      - swiggy-network
+
+networks:
+  swiggy-network:
+    driver: bridge
 
 volumes:
   postgres_data:
