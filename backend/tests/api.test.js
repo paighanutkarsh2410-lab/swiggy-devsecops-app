@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import app from "../src/app.js";
+import pool from "../src/db/pool.js";
 
 let server;
 let baseUrl;
@@ -198,4 +199,8 @@ test("PATCH /api/orders/:id/status rejects invalid status", async () => {
   const body = await response.json();
 
   assert.equal(body.error, "Invalid order status");
+});
+
+test.after(async () => {
+   await pool.end();
 });
