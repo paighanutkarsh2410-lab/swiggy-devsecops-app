@@ -46,6 +46,20 @@ services:
 
     networks:
       - swiggy-network
+  
+  frontend:
+    build:
+      context: ./frontend
+    image: swiggy-frontend:1.0.0
+    container_name: swiggy-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - swiggy-network
 
 networks:
   swiggy-network:
