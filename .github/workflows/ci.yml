@@ -1,0 +1,79 @@
+name: Swiggy DevSecOps CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: Backend Tests and Frontend Build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: swiggy_db
+          POSTGRES_USER: swiggy_app
+          POSTGRES_PASSWORD: swiggy_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U swiggy_app -d swiggy_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: swiggy_db
+      DB_USER: swiggy_app
+      DB_PASSWORD: swiggy_test_password
+      PORT: 3000
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Install backend dependencies
+        run: npm ci --prefix backend
+
+      - name: Initialize test database
+        run: |
+          PGPASSWORD="$DB_PASSWORD" psql \
+            -h "$DB_HOST" \
+            -p "$DB_PORT" \
+            -U "$DB_USER" \
+            -d "$DB_NAME" \
+            -v ON_ERROR_STOP=1 \
+            -f backend/db/init.sql
+
+      - name: Run backend API tests
+        run: npm test --prefix backend
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Lint frontend
+        run: npm run lint --prefix frontend
+
+      - name: Build frontend for production
+        run: npm run build --prefix frontend
