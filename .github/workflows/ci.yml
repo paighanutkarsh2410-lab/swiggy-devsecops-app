@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   test-and-build:
-    name: Backend Tests and Frontend Build
+    name: Backend Tests, Security Scan and Frontend Build
     runs-on: ubuntu-latest
 
     services:
@@ -47,6 +47,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Scan repository with Trivy
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '0'
 
       - name: Install PostgreSQL client
         run: |
