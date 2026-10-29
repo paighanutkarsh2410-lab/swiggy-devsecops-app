@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   test-and-build:
-    name: Backend Tests, Security Scan and Frontend Build
+    name: Backend Tests and Frontend Build
     runs-on: ubuntu-latest
 
     services:
@@ -88,3 +88,68 @@ jobs:
 
       - name: Build frontend for production
         run: npm run build --prefix frontend
+
+  container-security:
+    name: Build and Scan Docker Images
+    runs-on: ubuntu-latest
+    needs: test-and-build
+
+    env:
+      BACKEND_IMAGE: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-backend
+      FRONTEND_IMAGE: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: |
+          docker build \
+            -t "$BACKEND_IMAGE:$GITHUB_SHA" \
+            -t "$BACKEND_IMAGE:latest" \
+            -f backend/Dockerfile backend
+
+      - name: Build frontend image
+        run: |
+          docker build \
+            -t "$FRONTEND_IMAGE:$GITHUB_SHA" \
+            -t "$FRONTEND_IMAGE:latest" \
+            -f frontend/Dockerfile frontend
+
+      - name: Scan backend image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-backend:${{ github.sha }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '0'
+
+      - name: Scan frontend image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-frontend:${{ github.sha }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '0'
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish images to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push "$BACKEND_IMAGE:$GITHUB_SHA"
+          docker push "$BACKEND_IMAGE:latest"
+          docker push "$FRONTEND_IMAGE:$GITHUB_SHA"
+          docker push "$FRONTEND_IMAGE:latest"
