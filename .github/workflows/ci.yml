@@ -37,6 +37,7 @@ jobs:
       DB_NAME: swiggy_db
       DB_USER: swiggy_app
       DB_PASSWORD: swiggy_test_password
+      JWT_SECRET: ci-only-test-secret-not-used-anywhere-else
       PORT: 3000
 
     steps:

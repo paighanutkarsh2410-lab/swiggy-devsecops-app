@@ -2,15 +2,27 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import pool from "./db/pool.js";
+import { apiLimiter } from "./middleware/rateLimit.js";
+import authRoutes from "./routes/authRoutes.js";
 import restaurantRoutes from "./routes/restaurantRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 
 const app = express();
 
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
+const allowedOrigins = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
+// Requests arrive through one Nginx proxy.
+app.set("trust proxy", 1);
+
+app.use(helmet());
+app.use(cors({ origin: allowedOrigins.length > 0 ? allowedOrigins : false }));
+app.use(express.json({ limit: "100kb" }));
+
+app.use("/api", apiLimiter);
+app.use("/api/auth", authRoutes);
 app.use("/api/restaurants", restaurantRoutes);
 app.use("/api/orders", orderRoutes);
 
@@ -46,6 +58,17 @@ app.get("/health/db", async (req, res) => {
       database: "unavailable"
     });
   }
+});
+
+// eslint-disable-next-line no-unused-vars
+app.use((error, req, res, next) => {
+  if (error.status >= 400 && error.status < 500) {
+    return res.status(error.status).json({ error: "Invalid request" });
+  }
+
+  console.error("Unhandled request error:", error);
+
+  res.status(500).json({ error: "Internal server error" });
 });
 
 export default app;

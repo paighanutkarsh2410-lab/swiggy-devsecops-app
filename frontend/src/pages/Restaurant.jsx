@@ -1,13 +1,25 @@
 
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useAuth } from "../auth/context";
 import { api } from "../services/api";
+
+function readSavedCart(restaurantId) {
+  try {
+    return JSON.parse(sessionStorage.getItem(`cart-${restaurantId}`)) ?? {};
+  } catch {
+    return {};
+  }
+}
 
 export default function Restaurant() {
   const { id } = useParams();
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [restaurant, setRestaurant] = useState(null);
   const [menu, setMenu] = useState([]);
-  const [cart, setCart] = useState({});
+  const [cart, setCart] = useState(() => readSavedCart(id));
   const [customerName, setCustomerName] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [loading, setLoading] = useState(true);
@@ -36,6 +48,15 @@ export default function Restaurant() {
       cancelled = true;
     };
   }, [id]);
+
+  // Keeps the cart when a customer leaves to log in.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`cart-${id}`, JSON.stringify(cart));
+    } catch {
+      // The cart still works for this visit without storage.
+    }
+  }, [cart, id]);
 
   const itemsInCart = menu.filter((item) => cart[item.id] > 0);
 
@@ -75,13 +96,8 @@ export default function Restaurant() {
         })),
       });
 
-      const orderId = order.id ?? order.order?.id;
       setCart({});
-      setMessage(
-        orderId
-          ? `Order placed successfully! Your order number is #${orderId}.`
-          : "Order placed successfully!"
-      );
+      navigate(`/orders/${order.order.id}`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -178,32 +194,42 @@ export default function Restaurant() {
                 <strong>₹{total.toFixed(2)}</strong>
               </div>
 
-              <form className="checkout-form" onSubmit={placeOrder}>
-                <label>
-                  Your name
-                  <input
-                    required
-                    maxLength={150}
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="Enter your name"
-                  />
-                </label>
-                <label>
-                  Delivery address
-                  <textarea
-                    required
-                    maxLength={1000}
-                    value={customerAddress}
-                    onChange={(e) => setCustomerAddress(e.target.value)}
-                    placeholder="Enter your delivery address"
-                    rows={3}
-                  />
-                </label>
-                <button className="primary-button checkout-button" disabled={ordering}>
-                  {ordering ? "Placing order..." : `Place order · ₹${total.toFixed(2)}`}
-                </button>
-              </form>
+              {user ? (
+                <form className="checkout-form" onSubmit={placeOrder}>
+                  <label>
+                    Your name
+                    <input
+                      required
+                      maxLength={150}
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Enter your name"
+                    />
+                  </label>
+                  <label>
+                    Delivery address
+                    <textarea
+                      required
+                      maxLength={1000}
+                      value={customerAddress}
+                      onChange={(e) => setCustomerAddress(e.target.value)}
+                      placeholder="Enter your delivery address"
+                      rows={3}
+                    />
+                  </label>
+                  <button className="primary-button checkout-button" disabled={ordering}>
+                    {ordering ? "Placing order..." : `Place order · ₹${total.toFixed(2)}`}
+                  </button>
+                </form>
+              ) : (
+                <Link
+                  to="/login"
+                  state={{ from: location.pathname }}
+                  className="primary-button checkout-button"
+                >
+                  Log in to place your order
+                </Link>
+              )}
             </>
           )}
 

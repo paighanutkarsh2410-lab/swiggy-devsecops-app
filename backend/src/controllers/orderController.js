@@ -1,32 +1,110 @@
 import pool from "../db/pool.js";
+import { isValidId } from "../middleware/validateId.js";
+
+const MAX_ITEM_QUANTITY = 50;
+const MAX_ORDER_LINES = 50;
+const MAX_NAME_LENGTH = 150;
+const MAX_ADDRESS_LENGTH = 1000;
+
+const NEXT_STATUSES = {
+  PLACED: ["CONFIRMED", "CANCELLED"],
+  CONFIRMED: ["PREPARING", "CANCELLED"],
+  PREPARING: ["OUT_FOR_DELIVERY"],
+  OUT_FOR_DELIVERY: ["DELIVERED"],
+  DELIVERED: [],
+  CANCELLED: []
+};
+
+const ORDER_COLUMNS = `
+  id,
+  user_id,
+  restaurant_id,
+  customer_name,
+  customer_address,
+  total_amount,
+  status,
+  created_at,
+  updated_at
+`;
+
+function isStaffOf(user, restaurantId) {
+  return (
+    user.role === "STAFF" &&
+    String(user.restaurant_id) === String(restaurantId)
+  );
+}
+
+function canViewOrder(user, order) {
+  return (
+    String(order.user_id) === String(user.id) ||
+    isStaffOf(user, order.restaurant_id)
+  );
+}
+
+function parseOrderRequest(body) {
+  const { restaurant_id, customer_name, customer_address, items } = body ?? {};
+  const name = typeof customer_name === "string" ? customer_name.trim() : "";
+  const address =
+    typeof customer_address === "string" ? customer_address.trim() : "";
+
+  if (
+    !isValidId(restaurant_id) ||
+    !name ||
+    !address ||
+    !Array.isArray(items) ||
+    items.length === 0
+  ) {
+    return {
+      error: "restaurant_id, customer_name, customer_address and items are required"
+    };
+  }
+
+  if (name.length > MAX_NAME_LENGTH || address.length > MAX_ADDRESS_LENGTH) {
+    return { error: "Customer name or address is too long" };
+  }
+
+  if (items.length > MAX_ORDER_LINES) {
+    return { error: "Too many items in this order" };
+  }
+
+  // Repeated menu items are merged into a single order line.
+  const quantities = new Map();
+
+  for (const item of items) {
+    if (!isValidId(item?.menu_item_id)) {
+      return { error: "One or more menu items are invalid for this restaurant" };
+    }
+
+    if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+      return { error: "Item quantity must be a positive integer" };
+    }
+
+    const id = String(item.menu_item_id);
+    const quantity = (quantities.get(id) ?? 0) + item.quantity;
+
+    if (quantity > MAX_ITEM_QUANTITY) {
+      return { error: `Item quantity cannot be more than ${MAX_ITEM_QUANTITY}` };
+    }
+
+    quantities.set(id, quantity);
+  }
+
+  return { restaurantId: restaurant_id, name, address, quantities };
+}
 
 export async function createOrder(req, res) {
+  const parsed = parseOrderRequest(req.body);
+
+  if (parsed.error) {
+    return res.status(400).json({ error: parsed.error });
+  }
+
+  const { restaurantId, name, address, quantities } = parsed;
   const client = await pool.connect();
 
   try {
-    const {
-      restaurant_id,
-      customer_name,
-      customer_address,
-      items
-    } = req.body;
-
-    // Basic request validation
-    if (
-      !restaurant_id ||
-      !customer_name ||
-      !customer_address ||
-      !Array.isArray(items) ||
-      items.length === 0
-    ) {
-      return res.status(400).json({
-        error: "restaurant_id, customer_name, customer_address and items are required"
-      });
-    }
-
     await client.query("BEGIN");
 
-    // Verify restaurant
     const restaurantResult = await client.query(
       `
       SELECT id
@@ -34,7 +112,7 @@ export async function createOrder(req, res) {
       WHERE id = $1
         AND is_active = TRUE
       `,
-      [restaurant_id]
+      [restaurantId]
     );
 
     if (restaurantResult.rows.length === 0) {
@@ -45,9 +123,6 @@ export async function createOrder(req, res) {
       });
     }
 
-    // Fetch requested menu items
-    const menuItemIds = items.map((item) => item.menu_item_id);
-
     const menuResult = await client.query(
       `
       SELECT id, price, is_available
@@ -55,10 +130,10 @@ export async function createOrder(req, res) {
       WHERE restaurant_id = $1
         AND id = ANY($2::bigint[])
       `,
-      [restaurant_id, menuItemIds]
+      [restaurantId, [...quantities.keys()]]
     );
 
-    if (menuResult.rows.length !== items.length) {
+    if (menuResult.rows.length !== quantities.size) {
       await client.query("ROLLBACK");
 
       return res.status(400).json({
@@ -66,62 +141,38 @@ export async function createOrder(req, res) {
       });
     }
 
-    const menuItems = new Map(
-      menuResult.rows.map((item) => [String(item.id), item])
-    );
-
     let totalAmount = 0;
 
-    for (const item of items) {
-      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+    for (const menuItem of menuResult.rows) {
+      if (!menuItem.is_available) {
         await client.query("ROLLBACK");
 
         return res.status(400).json({
-          error: "Item quantity must be a positive integer"
+          error: `Menu item ${menuItem.id} is unavailable`
         });
       }
 
-      const menuItem = menuItems.get(String(item.menu_item_id));
-
-      if (!menuItem || !menuItem.is_available) {
-        await client.query("ROLLBACK");
-
-        return res.status(400).json({
-          error: `Menu item ${item.menu_item_id} is unavailable`
-        });
-      }
-
-      totalAmount += Number(menuItem.price) * item.quantity;
+      totalAmount += Number(menuItem.price) * quantities.get(String(menuItem.id));
     }
 
-    // Create order
     const orderResult = await client.query(
       `
       INSERT INTO orders (
+        user_id,
         restaurant_id,
         customer_name,
         customer_address,
         total_amount
       )
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, restaurant_id, customer_name,
-                customer_address, total_amount,
-                status, created_at, updated_at
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING ${ORDER_COLUMNS}
       `,
-      [
-        restaurant_id,
-        customer_name,
-        customer_address,
-        totalAmount
-      ]
+      [req.user.id, restaurantId, name, address, totalAmount]
     );
 
     const order = orderResult.rows[0];
 
-    // Create order items
-    for (const item of items) {
-      const menuItem = menuItems.get(String(item.menu_item_id));
-
+    for (const menuItem of menuResult.rows) {
       await client.query(
         `
         INSERT INTO order_items (
@@ -134,8 +185,8 @@ export async function createOrder(req, res) {
         `,
         [
           order.id,
-          item.menu_item_id,
-          item.quantity,
+          menuItem.id,
+          quantities.get(String(menuItem.id)),
           menuItem.price
         ]
       );
@@ -160,28 +211,82 @@ export async function createOrder(req, res) {
   }
 }
 
+export async function getMyOrders(req, res) {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        o.id,
+        o.restaurant_id,
+        r.name AS restaurant_name,
+        o.total_amount,
+        o.status,
+        o.created_at
+      FROM orders o
+      JOIN restaurants r
+        ON r.id = o.restaurant_id
+      WHERE o.user_id = $1
+      ORDER BY o.id DESC
+      LIMIT 100
+      `,
+      [req.user.id]
+    );
+
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Failed to fetch orders:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch orders"
+    });
+  }
+}
+
+export async function getRestaurantOrders(req, res) {
+  try {
+    const result = await pool.query(
+      `
+      SELECT ${ORDER_COLUMNS}
+      FROM orders
+      WHERE restaurant_id = $1
+      ORDER BY id DESC
+      LIMIT 100
+      `,
+      [req.user.restaurant_id]
+    );
+
+    res.status(200).json(
+      result.rows.map((order) => ({
+        ...order,
+        next_statuses: NEXT_STATUSES[order.status]
+      }))
+    );
+  } catch (error) {
+    console.error("Failed to fetch restaurant orders:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch restaurant orders"
+    });
+  }
+}
+
 export async function getOrderById(req, res) {
   try {
     const { id } = req.params;
 
     const orderResult = await pool.query(
       `
-      SELECT
-        id,
-        restaurant_id,
-        customer_name,
-        customer_address,
-        total_amount,
-        status,
-        created_at,
-        updated_at
+      SELECT ${ORDER_COLUMNS}
       FROM orders
       WHERE id = $1
       `,
       [id]
     );
 
-    if (orderResult.rows.length === 0) {
+    const order = orderResult.rows[0];
+
+    // Other people's orders look the same as orders that do not exist.
+    if (!order || !canViewOrder(req.user, order)) {
       return res.status(404).json({
         error: "Order not found"
       });
@@ -205,7 +310,7 @@ export async function getOrderById(req, res) {
     );
 
     res.status(200).json({
-      ...orderResult.rows[0],
+      ...order,
       items: itemsResult.rows
     });
   } catch (error) {
@@ -220,23 +325,48 @@ export async function getOrderById(req, res) {
 export async function updateOrderStatus(req, res) {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const status = req.body?.status;
 
-    const validStatuses = [
-      "PLACED",
-      "CONFIRMED",
-      "PREPARING",
-      "OUT_FOR_DELIVERY",
-      "DELIVERED",
-      "CANCELLED"
-    ];
-
-    if (!validStatuses.includes(status)) {
+    if (!Object.hasOwn(NEXT_STATUSES, status ?? "")) {
       return res.status(400).json({
         error: "Invalid order status"
       });
     }
 
+    const currentResult = await pool.query(
+      `
+      SELECT id, user_id, restaurant_id, status
+      FROM orders
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    const current = currentResult.rows[0];
+
+    if (!current || !canViewOrder(req.user, current)) {
+      return res.status(404).json({
+        error: "Order not found"
+      });
+    }
+
+    const isStaff = isStaffOf(req.user, current.restaurant_id);
+    const isCustomerCancelling =
+      status === "CANCELLED" && current.status === "PLACED";
+
+    if (!isStaff && !isCustomerCancelling) {
+      return res.status(403).json({
+        error: "You cannot make this status change"
+      });
+    }
+
+    if (!NEXT_STATUSES[current.status].includes(status)) {
+      return res.status(409).json({
+        error: `Order cannot move from ${current.status} to ${status}`
+      });
+    }
+
+    // Matching on the old status stops two updates racing each other.
     const result = await pool.query(
       `
       UPDATE orders
@@ -244,22 +374,15 @@ export async function updateOrderStatus(req, res) {
         status = $1,
         updated_at = NOW()
       WHERE id = $2
-      RETURNING
-        id,
-        restaurant_id,
-        customer_name,
-        customer_address,
-        total_amount,
-        status,
-        created_at,
-        updated_at
+        AND status = $3
+      RETURNING ${ORDER_COLUMNS}
       `,
-      [status, id]
+      [status, id, current.status]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Order not found"
+      return res.status(409).json({
+        error: "Order status has already changed"
       });
     }
 
@@ -275,4 +398,3 @@ export async function updateOrderStatus(req, res) {
     });
   }
 }
-
