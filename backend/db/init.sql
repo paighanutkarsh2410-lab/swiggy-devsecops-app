@@ -21,8 +21,21 @@ CREATE TABLE menu_items (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    email VARCHAR(254) NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'CUSTOMER'
+        CHECK (role IN ('CUSTOMER', 'STAFF')),
+    restaurant_id BIGINT REFERENCES restaurants(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK ((role = 'STAFF') = (restaurant_id IS NOT NULL))
+);
+
 CREATE TABLE orders (
     id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id),
     restaurant_id BIGINT NOT NULL REFERENCES restaurants(id),
     customer_name VARCHAR(150) NOT NULL,
     customer_address TEXT NOT NULL,
@@ -54,6 +67,9 @@ CREATE INDEX idx_menu_items_restaurant_id
 
 CREATE INDEX idx_orders_restaurant_id
     ON orders(restaurant_id);
+
+CREATE INDEX idx_orders_user_id
+    ON orders(user_id);
 
 CREATE INDEX idx_orders_status
     ON orders(status);
