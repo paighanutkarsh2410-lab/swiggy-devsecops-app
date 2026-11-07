@@ -13,7 +13,7 @@ COPY public ./public
 
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.30-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 # Pick up Alpine security patches released after the base image was built.
 USER root
