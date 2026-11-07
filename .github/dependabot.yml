@@ -1,17 +1,29 @@
 version: 2
 
 updates:
+  # Minor and patch updates arrive as one PR per directory, so they never
+  # conflict with each other in package-lock.json. Major updates stay separate.
   - package-ecosystem: npm
     directory: /backend
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    groups:
+      backend-minor-and-patch:
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    groups:
+      frontend-minor-and-patch:
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: docker
     directories:
@@ -20,6 +32,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
+    ignore:
+      # Stay on Node LTS releases. Move to the next LTS by hand.
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
+      # Odd nginx minor versions are mainline. Stay on the stable branch.
+      - dependency-name: nginxinc/nginx-unprivileged
+        update-types:
+          - version-update:semver-minor
 
   - package-ecosystem: github-actions
     directory: /
