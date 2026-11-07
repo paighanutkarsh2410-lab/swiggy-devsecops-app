@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/context";
 
 export default function Login() {
   const { user, login, register } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
   const [isRegistering, setIsRegistering] = useState(false);
   const [name, setName] = useState("");
@@ -14,7 +13,9 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
 
   if (user) {
-    return <Navigate to={user.role === "STAFF" ? "/staff" : "/"} replace />;
+    const home = user.role === "STAFF" ? "/staff" : "/";
+
+    return <Navigate to={location.state?.from ?? home} replace />;
   }
 
   async function handleSubmit(event) {
@@ -23,12 +24,12 @@ export default function Login() {
     setSubmitting(true);
 
     try {
-      const account = isRegistering
-        ? await register({ name, email, password })
-        : await login({ email, password });
-
-      const home = account.role === "STAFF" ? "/staff" : "/";
-      navigate(location.state?.from ?? home, { replace: true });
+      // Once the user is set, the redirect at the top of this page runs.
+      if (isRegistering) {
+        await register({ name, email, password });
+      } else {
+        await login({ email, password });
+      }
     } catch (err) {
       setError(err.message);
       setSubmitting(false);

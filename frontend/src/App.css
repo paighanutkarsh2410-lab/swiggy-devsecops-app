@@ -94,7 +94,7 @@
 .message.error { color: #b42318; }
 .message.success { color: var(--green); font-size: 13px; font-weight: 700; }
 
-.back-link { display: inline-block; margin-bottom: 22px; color: #686868; font-size: 13px; font-weight: 700; }
+.back-link { display: block; width: fit-content; margin-bottom: 22px; color: #686868; font-size: 13px; font-weight: 700; }
 .restaurant-banner {
   display: flex; align-items: center; justify-content: space-between; gap: 25px;
   padding: 35px 40px; border: 1px solid var(--line); border-radius: 22px;
