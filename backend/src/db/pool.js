@@ -16,4 +16,10 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000
 });
 
+// An idle connection can be dropped, for example when PostgreSQL restarts.
+// Without this handler the error is unhandled and crashes the whole API.
+pool.on("error", (error) => {
+  console.error("Idle database connection error:", error.message);
+});
+
 export default pool;
