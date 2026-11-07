@@ -46,8 +46,11 @@ services:
         condition: service_healthy
 
     networks:
-      - swiggy-network
-  
+      swiggy-network:
+        # Nginx looks up the backend address once at startup, so the
+        # backend keeps the same address when its container is recreated.
+        ipv4_address: 172.28.0.10
+
   frontend:
     build:
       context: ./frontend
@@ -59,15 +62,15 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-        # Nginx resolves the backend address at startup, so restart it
-        # whenever Compose recreates the backend container.
-        restart: true
     networks:
       - swiggy-network
 
 networks:
   swiggy-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
   postgres_data:
