@@ -58,7 +58,10 @@ services:
       - "8080:8080"
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
+        # Nginx resolves the backend address at startup, so restart it
+        # whenever Compose recreates the backend container.
+        restart: true
     networks:
       - swiggy-network
 
