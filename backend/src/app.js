@@ -6,6 +6,7 @@ import { apiLimiter } from "./middleware/rateLimit.js";
 import authRoutes from "./routes/authRoutes.js";
 import restaurantRoutes from "./routes/restaurantRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
+import partnerRoutes from "./routes/partnerRoutes.js";
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/restaurants", restaurantRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/partner", partnerRoutes);
 
 
 app.get("/", (req, res) => {

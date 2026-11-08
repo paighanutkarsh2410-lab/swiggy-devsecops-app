@@ -1,43 +1,21 @@
 import pool from "../db/pool.js";
 import { isValidId } from "../middleware/validateId.js";
+import { isPartner } from "../middleware/auth.js";
+import { canMove, isKnownStatus, ORDER_COLUMNS } from "../orders/statusFlow.js";
 
 const MAX_ITEM_QUANTITY = 50;
 const MAX_ORDER_LINES = 50;
 const MAX_NAME_LENGTH = 150;
 const MAX_ADDRESS_LENGTH = 1000;
 
-const NEXT_STATUSES = {
-  PLACED: ["CONFIRMED", "CANCELLED"],
-  CONFIRMED: ["PREPARING", "CANCELLED"],
-  PREPARING: ["OUT_FOR_DELIVERY"],
-  OUT_FOR_DELIVERY: ["DELIVERED"],
-  DELIVERED: [],
-  CANCELLED: []
-};
-
-const ORDER_COLUMNS = `
-  id,
-  user_id,
-  restaurant_id,
-  customer_name,
-  customer_address,
-  total_amount,
-  status,
-  created_at,
-  updated_at
-`;
-
-function isStaffOf(user, restaurantId) {
-  return (
-    user.role === "STAFF" &&
-    String(user.restaurant_id) === String(restaurantId)
-  );
+export function isPartnerOf(user, restaurantId) {
+  return isPartner(user) && String(user.restaurant_id) === String(restaurantId);
 }
 
 function canViewOrder(user, order) {
   return (
     String(order.user_id) === String(user.id) ||
-    isStaffOf(user, order.restaurant_id)
+    isPartnerOf(user, order.restaurant_id)
   );
 }
 
@@ -107,7 +85,7 @@ export async function createOrder(req, res) {
 
     const restaurantResult = await client.query(
       `
-      SELECT id
+      SELECT id, is_open
       FROM restaurants
       WHERE id = $1
         AND is_active = TRUE
@@ -123,9 +101,17 @@ export async function createOrder(req, res) {
       });
     }
 
+    if (!restaurantResult.rows[0].is_open) {
+      await client.query("ROLLBACK");
+
+      return res.status(409).json({
+        error: "This restaurant is not accepting orders right now"
+      });
+    }
+
     const menuResult = await client.query(
       `
-      SELECT id, price, is_available
+      SELECT id, price, (is_available AND NOT is_archived) AS is_available
       FROM menu_items
       WHERE restaurant_id = $1
         AND id = ANY($2::bigint[])
@@ -242,34 +228,6 @@ export async function getMyOrders(req, res) {
   }
 }
 
-export async function getRestaurantOrders(req, res) {
-  try {
-    const result = await pool.query(
-      `
-      SELECT ${ORDER_COLUMNS}
-      FROM orders
-      WHERE restaurant_id = $1
-      ORDER BY id DESC
-      LIMIT 100
-      `,
-      [req.user.restaurant_id]
-    );
-
-    res.status(200).json(
-      result.rows.map((order) => ({
-        ...order,
-        next_statuses: NEXT_STATUSES[order.status]
-      }))
-    );
-  } catch (error) {
-    console.error("Failed to fetch restaurant orders:", error);
-
-    res.status(500).json({
-      error: "Failed to fetch restaurant orders"
-    });
-  }
-}
-
 export async function getOrderById(req, res) {
   try {
     const { id } = req.params;
@@ -322,12 +280,14 @@ export async function getOrderById(req, res) {
   }
 }
 
+// Customers can only cancel their own order, and only before the restaurant
+// accepts it. Restaurants change status through the partner API.
 export async function updateOrderStatus(req, res) {
   try {
     const { id } = req.params;
     const status = req.body?.status;
 
-    if (!Object.hasOwn(NEXT_STATUSES, status ?? "")) {
+    if (!isKnownStatus(status)) {
       return res.status(400).json({
         error: "Invalid order status"
       });
@@ -350,17 +310,15 @@ export async function updateOrderStatus(req, res) {
       });
     }
 
-    const isStaff = isStaffOf(req.user, current.restaurant_id);
-    const isCustomerCancelling =
-      status === "CANCELLED" && current.status === "PLACED";
+    const isOwnOrder = String(current.user_id) === String(req.user.id);
 
-    if (!isStaff && !isCustomerCancelling) {
+    if (!isOwnOrder || status !== "CANCELLED" || current.status !== "PLACED") {
       return res.status(403).json({
         error: "You cannot make this status change"
       });
     }
 
-    if (!NEXT_STATUSES[current.status].includes(status)) {
+    if (!canMove(current.status, status)) {
       return res.status(409).json({
         error: `Order cannot move from ${current.status} to ${status}`
       });

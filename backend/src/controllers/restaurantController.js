@@ -12,6 +12,7 @@ export async function getRestaurants(req, res) {
         rating,
         delivery_time_minutes,
         is_active,
+        is_open,
         created_at
       FROM restaurants
       WHERE is_active = TRUE
@@ -43,6 +44,7 @@ export async function getRestaurantById(req, res) {
         rating,
         delivery_time_minutes,
         is_active,
+        is_open,
         created_at
       FROM restaurants
       WHERE id = $1
@@ -99,6 +101,7 @@ export async function getRestaurantMenu(req, res) {
       FROM menu_items
       WHERE restaurant_id = $1
         AND is_available = TRUE
+        AND is_archived = FALSE
       ORDER BY id
       `,
       [id]
