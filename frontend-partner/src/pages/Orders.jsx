@@ -31,6 +31,7 @@ export default function Orders({ onLiveChange }) {
       api.getOrders(scope)
         .then((data) => {
           setOrders(data);
+          setNow(Date.now());
           setError("");
         })
         .catch((err) => setError(err.message))

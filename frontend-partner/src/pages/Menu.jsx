@@ -201,6 +201,7 @@ export default function Menu() {
               <label className="switch" title="Customers can order this item">
                 <input
                   type="checkbox"
+                  aria-label={`${item.name} in stock`}
                   checked={item.is_available}
                   disabled={busyId === item.id}
                   onChange={(event) =>

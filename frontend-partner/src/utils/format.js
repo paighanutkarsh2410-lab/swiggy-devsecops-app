@@ -34,6 +34,19 @@ export function minutesSince(value, now) {
   return Math.max(0, Math.floor((now - new Date(value)) / 60000));
 }
 
+// "just now", "12 min ago", "3 h ago", "12 days ago".
+export function timeAgo(value, now) {
+  const minutes = minutesSince(value, now);
+
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
+
+  const days = Math.floor(minutes / (24 * 60));
+
+  return `${days} ${days === 1 ? "day" : "days"} ago`;
+}
+
 export function minutesUntil(value, now) {
-  return Math.ceil((new Date(value) - now) / 60000);
+  return Math.round((new Date(value) - now) / 60000);
 }

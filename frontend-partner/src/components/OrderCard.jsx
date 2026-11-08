@@ -3,9 +3,9 @@ import {
   actionLabel,
   formatPrice,
   formatTime,
-  minutesSince,
   minutesUntil,
   statusLabel,
+  timeAgo,
 } from "../utils/format";
 
 const PREP_OPTIONS = [10, 15, 20, 30, 45, 60];
@@ -44,7 +44,7 @@ export default function OrderCard({ order, now, busy, isNew, onChangeStatus }) {
       <header className="order-card-head">
         <h3>#{order.id}</h3>
         <span className="order-age">
-          {formatTime(order.created_at)} · {minutesSince(order.created_at, now)} min ago
+          {formatTime(order.created_at)} · {timeAgo(order.created_at, now)}
         </span>
       </header>
 
