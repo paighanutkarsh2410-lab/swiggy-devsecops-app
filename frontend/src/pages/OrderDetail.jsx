@@ -57,7 +57,7 @@ export default function OrderDetail() {
     setError("");
 
     try {
-      const result = await api.updateOrderStatus(id, "CANCELLED");
+      const result = await api.cancelOrder(id);
       setOrder((current) => ({ ...current, ...result.order }));
     } catch (err) {
       setError(err.message);
@@ -88,6 +88,11 @@ export default function OrderDetail() {
       <span className="eyebrow">ORDER #{order.id}</span>
       <h1 className="page-title">{statusLabel(order.status)}</h1>
       <p className="muted">Placed {formatDate(order.created_at)}</p>
+      {order.ready_by && ["CONFIRMED", "PREPARING"].includes(order.status) && (
+        <p className="message success">
+          The restaurant expects your food to be ready by {formatDate(order.ready_by)}.
+        </p>
+      )}
 
       {isCancelled ? (
         <p className="message error">This order was cancelled.</p>

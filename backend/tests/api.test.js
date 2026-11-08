@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import app from "../src/app.js";
 import pool from "../src/db/pool.js";
 import { hashPassword } from "../src/auth/password.js";
+import { stopOrderEvents } from "../src/events/orderEvents.js";
 
 const PASSWORD = "test-password-123";
 const runId = Date.now();
@@ -13,6 +14,7 @@ let customerToken;
 let otherCustomerToken;
 let staffToken;
 let otherStaffToken;
+let ownerToken;
 let orderId;
 
 async function api(path, { method = "GET", token, body } = {}) {
@@ -25,9 +27,11 @@ async function api(path, { method = "GET", token, body } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body)
   });
 
+  const text = await response.text();
+
   return {
     status: response.status,
-    body: await response.json()
+    body: text ? JSON.parse(text) : null
   };
 }
 
@@ -46,15 +50,15 @@ async function registerCustomer(label) {
   return response.body.token;
 }
 
-async function createStaff(label, restaurantId) {
+async function createPartner(label, restaurantId, role = "STAFF") {
   const email = `${label}-${runId}@example.test`;
 
   await pool.query(
     `
     INSERT INTO users (name, email, password_hash, role, restaurant_id)
-    VALUES ($1, $2, $3, 'STAFF', $4)
+    VALUES ($1, $2, $3, $4, $5)
     `,
-    [`Test ${label}`, email, await hashPassword(PASSWORD), restaurantId]
+    [`Test ${label}`, email, await hashPassword(PASSWORD), role, restaurantId]
   );
 
   const response = await api("/api/auth/login", {
@@ -96,6 +100,15 @@ function setStatus(id, token, status) {
   });
 }
 
+// Restaurant-side status change. Accepting an order needs a preparation time.
+function partnerStatus(id, token, status, prepMinutes = status === "CONFIRMED" ? 15 : undefined) {
+  return api(`/api/partner/orders/${id}/status`, {
+    method: "PATCH",
+    token,
+    body: { status, prep_minutes: prepMinutes }
+  });
+}
+
 test.before(async () => {
   server = app.listen(0);
 
@@ -108,11 +121,15 @@ test.before(async () => {
 
   customerToken = await registerCustomer("customer");
   otherCustomerToken = await registerCustomer("other-customer");
-  staffToken = await createStaff("staff", 1);
-  otherStaffToken = await createStaff("other-staff", 2);
+  staffToken = await createPartner("staff", 1);
+  otherStaffToken = await createPartner("other-staff", 2);
+  ownerToken = await createPartner("owner", 1, "OWNER");
 });
 
 test.after(async () => {
+  server.closeAllConnections();
+  await stopOrderEvents();
+
   await new Promise((resolve, reject) => {
     server.close((error) => {
       if (error) {
@@ -350,61 +367,139 @@ test("GET /api/orders lists only the customer's orders", async () => {
   assert.equal(mine.body[0].restaurant_name, "Spice Garden");
 });
 
-test("GET /api/orders/restaurant is limited to the staff member's restaurant", async () => {
-  const customer = await api("/api/orders/restaurant", { token: customerToken });
-  const staff = await api("/api/orders/restaurant", { token: staffToken });
-  const otherStaff = await api("/api/orders/restaurant", {
-    token: otherStaffToken
-  });
+test("partner routes are closed to customers and anonymous users", async () => {
+  for (const path of ["/api/partner/me", "/api/partner/orders", "/api/partner/menu"]) {
+    assert.equal((await api(path)).status, 401);
+    assert.equal((await api(path, { token: customerToken })).status, 403);
+  }
+});
 
-  assert.equal(customer.status, 403);
+test("GET /api/partner/me returns the partner and their restaurant", async () => {
+  const staff = await api("/api/partner/me", { token: staffToken });
+  const owner = await api("/api/partner/me", { token: ownerToken });
+
+  assert.equal(staff.status, 200);
+  assert.equal(staff.body.user.role, "STAFF");
+  assert.equal(staff.body.restaurant.name, "Spice Garden");
+  assert.equal(owner.body.user.role, "OWNER");
+  assert.equal(owner.body.user.password_hash, undefined);
+});
+
+test("GET /api/partner/orders is limited to the partner's restaurant", async () => {
+  const staff = await api("/api/partner/orders", { token: staffToken });
+  const otherStaff = await api("/api/partner/orders", { token: otherStaffToken });
+
   assert.equal(staff.status, 200);
 
   const order = staff.body.find((item) => item.id === orderId);
 
   assert.deepEqual(order.next_statuses, ["CONFIRMED", "CANCELLED"]);
+  assert.deepEqual(order.items, [
+    { name: "Paneer Butter Masala", quantity: 1 },
+    { name: "Dal Tadka", quantity: 2 }
+  ]);
   assert.ok(!otherStaff.body.some((item) => item.id === orderId));
 });
 
-test("PATCH /api/orders/:id/status rejects an unknown status", async () => {
-  const { status, body } = await setStatus(orderId, staffToken, "INVALID_STATUS");
+test("the old staff route on the customer API is gone", async () => {
+  const { status } = await api("/api/orders/restaurant", { token: staffToken });
+
+  assert.equal(status, 400);
+});
+
+test("PATCH /api/partner/orders/:id/status rejects an unknown status", async () => {
+  const { status, body } = await partnerStatus(orderId, staffToken, "INVALID_STATUS");
 
   assert.equal(status, 400);
   assert.equal(body.error, "Invalid order status");
 });
 
+test("accepting an order needs a valid preparation time", async () => {
+  for (const prep of [undefined, 0, 4, 121, 12.5, "15"]) {
+    const { status } = await api(`/api/partner/orders/${orderId}/status`, {
+      method: "PATCH",
+      token: staffToken,
+      body: { status: "CONFIRMED", prep_minutes: prep }
+    });
+
+    assert.equal(status, 400, `prep_minutes ${prep} should be rejected`);
+  }
+});
+
 test("customers cannot move an order forward", async () => {
-  const { status } = await setStatus(orderId, customerToken, "CONFIRMED");
+  const viaCustomerApi = await setStatus(orderId, customerToken, "CONFIRMED");
+  const viaPartnerApi = await partnerStatus(orderId, customerToken, "CONFIRMED");
+
+  assert.equal(viaCustomerApi.status, 403);
+  assert.equal(viaPartnerApi.status, 403);
+});
+
+test("staff cannot change status through the customer API", async () => {
+  const { status } = await setStatus(orderId, staffToken, "CONFIRMED");
 
   assert.equal(status, 403);
 });
 
 test("staff from another restaurant cannot update an order", async () => {
-  const { status } = await setStatus(orderId, otherStaffToken, "CONFIRMED");
+  const { status } = await partnerStatus(orderId, otherStaffToken, "CONFIRMED");
 
   assert.equal(status, 404);
 });
 
 test("staff can take an order through its full lifecycle", async () => {
-  for (const next of ["CONFIRMED", "PREPARING", "OUT_FOR_DELIVERY", "DELIVERED"]) {
-    const { status, body } = await setStatus(orderId, staffToken, next);
+  const accepted = await partnerStatus(orderId, staffToken, "CONFIRMED", 20);
+
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.order.status, "CONFIRMED");
+  assert.equal(accepted.body.order.prep_minutes, 20);
+
+  const readyIn = new Date(accepted.body.order.ready_by) - Date.now();
+
+  assert.ok(
+    readyIn > 19 * 60 * 1000 && readyIn <= 20 * 60 * 1000,
+    "ready_by is about 20 minutes away"
+  );
+
+  for (const next of ["PREPARING", "OUT_FOR_DELIVERY", "DELIVERED"]) {
+    const { status, body } = await partnerStatus(orderId, staffToken, next);
 
     assert.equal(status, 200);
     assert.equal(body.order.status, next);
   }
+
+  const { body } = await api(`/api/orders/${orderId}`, { token: customerToken });
+
+  assert.equal(body.status, "DELIVERED");
+  assert.equal(body.prep_minutes, 20);
 });
 
 test("a delivered order cannot change status", async () => {
-  const { status } = await setStatus(orderId, staffToken, "PREPARING");
+  const { status } = await partnerStatus(orderId, staffToken, "PREPARING");
 
   assert.equal(status, 409);
+});
+
+test("delivered orders leave the active list but stay in the full list", async () => {
+  const active = await api("/api/partner/orders", { token: staffToken });
+  const all = await api("/api/partner/orders?scope=all", { token: staffToken });
+
+  assert.ok(!active.body.some((order) => order.id === orderId));
+  assert.ok(all.body.some((order) => order.id === orderId));
 });
 
 test("statuses cannot be skipped", async () => {
   const order = await placeOrder(customerToken);
-  const { status } = await setStatus(order.id, staffToken, "DELIVERED");
+  const { status } = await partnerStatus(order.id, staffToken, "DELIVERED");
 
   assert.equal(status, 409);
+});
+
+test("the restaurant can reject a new order", async () => {
+  const order = await placeOrder(customerToken);
+  const { status, body } = await partnerStatus(order.id, ownerToken, "CANCELLED");
+
+  assert.equal(status, 200);
+  assert.equal(body.order.status, "CANCELLED");
 });
 
 test("customers can cancel only while an order is PLACED", async () => {
@@ -416,9 +511,298 @@ test("customers can cancel only while an order is PLACED", async () => {
 
   const confirmed = await placeOrder(customerToken);
 
-  await setStatus(confirmed.id, staffToken, "CONFIRMED");
+  await partnerStatus(confirmed.id, staffToken, "CONFIRMED");
 
   const tooLate = await setStatus(confirmed.id, customerToken, "CANCELLED");
 
   assert.equal(tooLate.status, 403);
+});
+
+test("a closed restaurant does not accept orders", async () => {
+  try {
+    const closed = await api("/api/partner/restaurant", {
+      method: "PATCH",
+      token: staffToken,
+      body: { is_open: false }
+    });
+
+    assert.equal(closed.status, 200);
+    assert.equal(closed.body.restaurant.is_open, false);
+
+    const listed = await api("/api/restaurants/1");
+
+    assert.equal(listed.body.is_open, false);
+
+    const order = await api("/api/orders", {
+      method: "POST",
+      token: customerToken,
+      body: orderBody([{ menu_item_id: 1, quantity: 1 }])
+    });
+
+    assert.equal(order.status, 409);
+  } finally {
+    await api("/api/partner/restaurant", {
+      method: "PATCH",
+      token: staffToken,
+      body: { is_open: true }
+    });
+  }
+
+  assert.equal((await api("/api/restaurants/1")).body.is_open, true);
+});
+
+test("PATCH /api/partner/restaurant validates is_open", async () => {
+  const { status } = await api("/api/partner/restaurant", {
+    method: "PATCH",
+    token: ownerToken,
+    body: { is_open: "no" }
+  });
+
+  assert.equal(status, 400);
+});
+
+test("only the owner can add menu items, and input is validated", async () => {
+  const item = {
+    name: `Test Thali ${runId}`,
+    description: "Test item",
+    price: 199.5,
+    is_veg: true
+  };
+
+  const byStaff = await api("/api/partner/menu", {
+    method: "POST",
+    token: staffToken,
+    body: item
+  });
+
+  assert.equal(byStaff.status, 403);
+
+  for (const bad of [
+    { ...item, name: "" },
+    { ...item, price: -1 },
+    { ...item, price: 10.999 },
+    { ...item, price: "free" },
+    { ...item, is_veg: "yes" }
+  ]) {
+    const { status } = await api("/api/partner/menu", {
+      method: "POST",
+      token: ownerToken,
+      body: bad
+    });
+
+    assert.equal(status, 400);
+  }
+
+  const created = await api("/api/partner/menu", {
+    method: "POST",
+    token: ownerToken,
+    body: item
+  });
+
+  assert.equal(created.status, 201);
+  assert.equal(created.body.item.price, "199.50");
+
+  const menu = await api("/api/restaurants/1/menu");
+
+  assert.ok(menu.body.some((row) => row.id === created.body.item.id));
+});
+
+test("staff can mark an item sold out but cannot edit it", async () => {
+  const { body } = await api("/api/partner/menu", {
+    method: "POST",
+    token: ownerToken,
+    body: { name: `Sold Out Test ${runId}`, price: 99 }
+  });
+  const itemId = body.item.id;
+
+  const rename = await api(`/api/partner/menu/${itemId}`, {
+    method: "PATCH",
+    token: staffToken,
+    body: { name: "Renamed by staff" }
+  });
+
+  assert.equal(rename.status, 403);
+
+  const soldOut = await api(`/api/partner/menu/${itemId}`, {
+    method: "PATCH",
+    token: staffToken,
+    body: { is_available: false }
+  });
+
+  assert.equal(soldOut.status, 200);
+  assert.equal(soldOut.body.item.is_available, false);
+
+  const customerMenu = await api("/api/restaurants/1/menu");
+  const partnerMenu = await api("/api/partner/menu", { token: staffToken });
+
+  assert.ok(!customerMenu.body.some((row) => row.id === itemId));
+  assert.ok(partnerMenu.body.some((row) => row.id === itemId));
+
+  const order = await api("/api/orders", {
+    method: "POST",
+    token: customerToken,
+    body: orderBody([{ menu_item_id: Number(itemId), quantity: 1 }])
+  });
+
+  assert.equal(order.status, 400);
+
+  const repriced = await api(`/api/partner/menu/${itemId}`, {
+    method: "PATCH",
+    token: ownerToken,
+    body: { price: "120.00", is_available: true }
+  });
+
+  assert.equal(repriced.status, 200);
+  assert.equal(repriced.body.item.price, "120.00");
+});
+
+test("partners cannot change another restaurant's menu", async () => {
+  const pizzaMenu = await api("/api/partner/menu", { token: otherStaffToken });
+  const pizzaItem = pizzaMenu.body[0];
+
+  const { status } = await api(`/api/partner/menu/${pizzaItem.id}`, {
+    method: "PATCH",
+    token: ownerToken,
+    body: { price: 1 }
+  });
+
+  assert.equal(status, 404);
+});
+
+test("removing an item archives it and keeps past orders intact", async () => {
+  const { body } = await api("/api/partner/menu", {
+    method: "POST",
+    token: ownerToken,
+    body: { name: `Archive Test ${runId}`, price: 50 }
+  });
+  const itemId = body.item.id;
+  const order = await placeOrder(customerToken, [
+    { menu_item_id: Number(itemId), quantity: 2 }
+  ]);
+
+  const byStaff = await api(`/api/partner/menu/${itemId}`, {
+    method: "DELETE",
+    token: staffToken
+  });
+
+  assert.equal(byStaff.status, 403);
+
+  const removed = await api(`/api/partner/menu/${itemId}`, {
+    method: "DELETE",
+    token: ownerToken
+  });
+
+  assert.equal(removed.status, 204);
+
+  const partnerMenu = await api("/api/partner/menu", { token: ownerToken });
+
+  assert.ok(!partnerMenu.body.some((row) => row.id === itemId));
+
+  const pastOrder = await api(`/api/orders/${order.id}`, { token: customerToken });
+
+  assert.equal(pastOrder.body.items[0].name, `Archive Test ${runId}`);
+
+  const again = await api(`/api/partner/menu/${itemId}`, {
+    method: "DELETE",
+    token: ownerToken
+  });
+
+  assert.equal(again.status, 404);
+});
+
+// Opens the partner event stream, runs trigger once the stream is ready, and
+// returns the first order event that matches, or null after the timeout.
+async function waitForEvent(token, matches, trigger, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const response = await fetch(`${baseUrl}/api/partner/events`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: controller.signal
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/event-stream/);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let buffer = "";
+  let triggered = false;
+
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+
+      if (done) return null;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      let end;
+
+      while ((end = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, end);
+
+        buffer = buffer.slice(end + 2);
+
+        const name = /^event: (.+)$/m.exec(block)?.[1];
+        const data = /^data: (.+)$/m.exec(block)?.[1];
+
+        if (name === "ready" && !triggered) {
+          triggered = true;
+          await trigger();
+        }
+
+        if (name === "order") {
+          const event = JSON.parse(data);
+
+          if (matches(event)) return event;
+        }
+      }
+    }
+  } catch (error) {
+    if (error.name === "AbortError") return null;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+test("the partner event stream announces new orders and status changes", async () => {
+  let newOrderId;
+
+  const created = await waitForEvent(
+    staffToken,
+    (event) => event.type === "order_created" && event.order_id === newOrderId,
+    async () => {
+      newOrderId = (await placeOrder(customerToken)).id;
+    }
+  );
+
+  assert.ok(created, "order_created event received");
+  assert.equal(created.restaurant_id, "1");
+  assert.equal(created.status, "PLACED");
+
+  const updated = await waitForEvent(
+    staffToken,
+    (event) => event.type === "order_updated" && event.order_id === newOrderId,
+    () => partnerStatus(newOrderId, staffToken, "CONFIRMED")
+  );
+
+  assert.ok(updated, "order_updated event received");
+  assert.equal(updated.status, "CONFIRMED");
+});
+
+test("the event stream only carries the partner's own restaurant", async () => {
+  let newOrderId;
+
+  const leaked = await waitForEvent(
+    otherStaffToken,
+    (event) => event.order_id === newOrderId,
+    async () => {
+      newOrderId = (await placeOrder(customerToken)).id;
+    },
+    1500
+  );
+
+  assert.equal(leaked, null);
 });

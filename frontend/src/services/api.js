@@ -70,11 +70,10 @@ export const api = {
 
   getOrder: (id) => request(`/orders/${id}`),
 
-  getRestaurantOrders: () => request("/orders/restaurant"),
-
-  updateOrderStatus: (id, status) =>
+  // Customers can only cancel their own order before the restaurant accepts it.
+  cancelOrder: (id) =>
     request(`/orders/${id}/status`, {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status: "CANCELLED" }),
     }),
 };

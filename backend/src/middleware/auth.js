@@ -33,9 +33,24 @@ export async function requireAuth(req, res, next) {
   next();
 }
 
-export function requireStaff(req, res, next) {
-  if (req.user.role !== "STAFF") {
-    return res.status(403).json({ error: "Staff access required" });
+export const PARTNER_ROLES = ["OWNER", "STAFF"];
+
+export function isPartner(user) {
+  return PARTNER_ROLES.includes(user.role) && user.restaurant_id != null;
+}
+
+// Restaurant owners and staff, for the partner console.
+export function requirePartner(req, res, next) {
+  if (!isPartner(req.user)) {
+    return res.status(403).json({ error: "Restaurant partner access required" });
+  }
+
+  next();
+}
+
+export function requireOwner(req, res, next) {
+  if (req.user.role !== "OWNER") {
+    return res.status(403).json({ error: "Only the restaurant owner can do this" });
   }
 
   next();

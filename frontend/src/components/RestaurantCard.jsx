@@ -10,7 +10,7 @@ export default function RestaurantCard({ restaurant }) {
       <div className="restaurant-art">
         <span>{restaurant.cuisine === "Italian" ? "🍕" : "🍛"}</span>
         <span className="delivery-badge">
-          {restaurant.delivery_time_minutes} min
+          {restaurant.is_open === false ? "Closed" : `${restaurant.delivery_time_minutes} min`}
         </span>
       </div>
 
