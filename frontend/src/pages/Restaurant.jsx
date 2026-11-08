@@ -132,6 +132,9 @@ export default function Restaurant() {
             <span>{restaurant.delivery_time_minutes} min delivery</span>
             <span>{restaurant.address}</span>
           </div>
+          {!restaurant.is_open && (
+            <p className="closed-banner">Not accepting orders right now. Please check back soon.</p>
+          )}
         </div>
         <div className="menu-banner-art" aria-hidden="true">
           {restaurant.cuisine === "Italian" ? "🍕" : "🍛"}
@@ -194,7 +197,9 @@ export default function Restaurant() {
                 <strong>₹{total.toFixed(2)}</strong>
               </div>
 
-              {user ? (
+              {!restaurant.is_open ? (
+                <p className="message error">This restaurant is closed for orders right now.</p>
+              ) : user ? (
                 <form className="checkout-form" onSubmit={placeOrder}>
                   <label>
                     Your name

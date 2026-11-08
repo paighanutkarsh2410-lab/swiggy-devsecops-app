@@ -13,9 +13,7 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
 
   if (user) {
-    const home = user.role === "STAFF" ? "/staff" : "/";
-
-    return <Navigate to={location.state?.from ?? home} replace />;
+    return <Navigate to={location.state?.from ?? "/"} replace />;
   }
 
   async function handleSubmit(event) {

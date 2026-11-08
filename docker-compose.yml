@@ -65,6 +65,22 @@ services:
     networks:
       - swiggy-network
 
+  # Restaurant partner console. A separate site from the customer app,
+  # sharing the same backend API.
+  partner:
+    build:
+      context: ./frontend-partner
+    image: swiggy-partner:1.0.0
+    container_name: swiggy-partner
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - swiggy-network
+
 networks:
   swiggy-network:
     driver: bridge

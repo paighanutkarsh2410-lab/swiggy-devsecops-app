@@ -93,6 +93,7 @@
 .message { padding: 20px 0; color: var(--muted); line-height: 1.6; }
 .message.error { color: #b42318; }
 .message.success { color: var(--green); font-size: 13px; font-weight: 700; }
+.closed-banner { display: inline-block; margin: 14px 0 0; padding: 8px 14px; border-radius: 10px; background: #fdecea; color: #b42318; font-size: 13px; font-weight: 700; }
 
 .back-link { display: block; width: fit-content; margin-bottom: 22px; color: #686868; font-size: 13px; font-weight: 700; }
 .restaurant-banner {
