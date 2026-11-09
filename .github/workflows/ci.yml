@@ -193,6 +193,9 @@ jobs:
           if-no-files-found: ignore
 
       # SBOM: every package in each image, in CycloneDX format, made by Syft.
+      - name: Create the SBOM folder
+        run: mkdir -p sboms
+
       - name: Generate backend SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
