@@ -1,0 +1,3 @@
+# OWASP ZAP baseline scan rules for both websites (.github/scripts/dast.sh).
+# Any alert not listed here fails the build. Each IGNORE needs a reason.
+# Format: rule id <TAB> IGNORE|WARN|FAIL <TAB> (rule name and reason)

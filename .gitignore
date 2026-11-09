@@ -6,3 +6,7 @@ coverage/
 dist/
 *.log
 .DS_Store
+
+# Written by CI: OWASP ZAP reports and SBOMs.
+zap-reports/
+sboms/

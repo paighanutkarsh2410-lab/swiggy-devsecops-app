@@ -1,0 +1,12 @@
+# Used by .github/scripts/dast.sh on top of docker-compose.yml: runs the
+# images CI just built and scanned, instead of building new ones.
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?}:${IMAGE_TAG:?}
+    pull_policy: never
+  frontend:
+    image: ${FRONTEND_IMAGE:?}:${IMAGE_TAG:?}
+    pull_policy: never
+  partner:
+    image: ${PARTNER_IMAGE:?}:${IMAGE_TAG:?}
+    pull_policy: never
