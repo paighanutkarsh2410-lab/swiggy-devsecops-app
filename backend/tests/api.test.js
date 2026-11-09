@@ -835,7 +835,7 @@ test("GET /metrics serves Prometheus metrics with route patterns, not raw URLs",
   assert.match(text, /route="\/api\/restaurants\/:id"/);
   assert.match(text, /route="\/api\/restaurants\/:id\/menu"/);
   assert.doesNotMatch(text, /route="\/api\/restaurants\/1"/);
-  assert.match(text, /service="swiggy-backend"/);
+  assert.match(text, /app="swiggy-backend"/);
 });
 
 test("order metrics count new orders and status changes", async () => {

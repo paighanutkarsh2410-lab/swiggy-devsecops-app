@@ -165,6 +165,20 @@ All partner routes need an `OWNER` or `STAFF` login and only touch that partner'
 
 Orders move through `PLACED`, `CONFIRMED`, `PREPARING`, `OUT_FOR_DELIVERY` and `DELIVERED`. The restaurant can reject an order until preparation starts, and customers can cancel while it is `PLACED`.
 
+## Metrics
+
+The API serves Prometheus metrics at `GET /metrics` on port 3000. The path is outside `/api`, so neither website's Nginx proxies it: on Kubernetes only Prometheus can reach it, through a network policy. The infra repo's Grafana dashboard and alerts are built on these:
+
+| Metric | Type | What it measures |
+|---|---|---|
+| `swiggy_http_request_duration_seconds` | Histogram | Request time by `method`, `route` and `status_code`. Routes are patterns such as `/api/orders/:id`, never raw URLs, so the number of series stays small |
+| `swiggy_orders_created_total` | Counter | Orders placed, by `restaurant_id` |
+| `swiggy_order_status_changes_total` | Counter | Status changes, by new `status` and `actor` (`customer` or `partner`) |
+| `swiggy_partner_event_streams` | Gauge | Partner consoles connected to the live order stream |
+| `swiggy_process_*`, `swiggy_nodejs_*` | Various | CPU, memory, event loop lag and garbage collection |
+
+Every metric carries `app="swiggy-backend"`.
+
 ## Project status
 
 - [x] React frontend, Express API and PostgreSQL

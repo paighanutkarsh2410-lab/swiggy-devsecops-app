@@ -6,7 +6,8 @@ import client from "prom-client";
 
 export const registry = new client.Registry();
 
-registry.setDefaultLabels({ service: "swiggy-backend" });
+// "app", not "service": Prometheus adds its own service label to every target.
+registry.setDefaultLabels({ app: "swiggy-backend" });
 
 // CPU, memory, event loop lag, garbage collection and so on.
 client.collectDefaultMetrics({ register: registry, prefix: "swiggy_" });
