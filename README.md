@@ -192,4 +192,4 @@ Every metric carries `app="swiggy-backend"`.
 - [x] Ansible and Terraform automation
 - [x] AWS deployment on K3s
 - [x] GitOps with Helm and Argo CD
-- [ ] Monitoring with Prometheus and Grafana
+- [x] Monitoring with Prometheus and Grafana ([on kind](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-infra#monitoring), on demand)
