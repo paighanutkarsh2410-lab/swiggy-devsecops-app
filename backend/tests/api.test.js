@@ -863,3 +863,16 @@ test("metrics are not served under /api, so the websites never expose them", asy
 
   assert.equal(response.status, 404);
 });
+
+test("requests rejected before a route matches are labelled with their router", async () => {
+  // Rejected by the login check inside the orders router, before /:id matches.
+  assert.equal((await api("/api/orders/123")).status, 401);
+  // Handled by the router's own "/" route.
+  assert.equal((await api("/api/restaurants")).status, 200);
+
+  const text = await metricsText();
+
+  assert.match(text, /route="\/api\/orders\/\*",status_code="401"/);
+  assert.match(text, /route="\/api\/restaurants",status_code="200"/);
+  assert.doesNotMatch(text, /route="\/api\/restaurants\/"/);
+});
