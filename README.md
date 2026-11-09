@@ -36,9 +36,21 @@ flowchart LR
     Build --> Images[Build 3 Docker images]
     Images --> ImageScan[Trivy image scans]
     ImageScan --> GHCR[Publish to GHCR]
+    GHCR --> InfraPR[Open deploy PR in infra repo]
+    InfraPR --> Argo[Merged: Argo CD deploys]
 ```
 
 Trivy fails the build on any fixable HIGH or CRITICAL finding, and images are only published from `main` after every scan passes. CodeQL analyses the code on each pull request, and Dependabot opens weekly update pull requests.
+
+### Deployment (GitOps)
+
+This repo never deploys anything itself. After the images are published, CI opens a pull request in [swiggy-devsecops-infra](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-infra) that sets the new image tag. Merging that pull request is the deployment: Argo CD rolls it out to the Kubernetes cluster, and reverting it rolls back. See the infra repo's README for the full flow.
+
+The job needs a token that can open pull requests in the infra repo. Without it the job does nothing and says so. To set it up:
+
+1. In GitHub, go to **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+2. Give it access to **only** `swiggy-devsecops-infra`, with **Contents: Read and write** and **Pull requests: Read and write**. Set an expiry date.
+3. In this repo, go to **Settings → Secrets and variables → Actions → New repository secret**, name it `INFRA_REPO_TOKEN` and paste the token.
 
 | Image | Contents |
 |---|---|
@@ -165,5 +177,5 @@ Orders move through `PLACED`, `CONFIRMED`, `PREPARING`, `OUT_FOR_DELIVERY` and `
 - [x] Kubernetes deployment ([infra repo](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-infra))
 - [x] Ansible and Terraform automation
 - [x] AWS deployment on K3s
-- [ ] GitOps with Helm and Argo CD
+- [x] GitOps with Helm and Argo CD
 - [ ] Monitoring with Prometheus and Grafana
