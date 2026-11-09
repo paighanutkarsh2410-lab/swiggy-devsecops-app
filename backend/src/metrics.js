@@ -53,12 +53,26 @@ export function metricsMiddleware(req, res, next) {
   const stop = httpRequestDuration.startTimer();
 
   res.on("finish", () => {
-    const route = req.route ? `${req.baseUrl}${req.route.path}` : "unmatched";
-
-    stop({ method: req.method, route, status_code: String(res.statusCode) });
+    stop({ method: req.method, route: routeLabel(req), status_code: String(res.statusCode) });
   });
 
   next();
+}
+
+// The route pattern for the label, for example:
+//   matched route            -> /api/orders/:id
+//   router's own root ("/")   -> /api/orders
+//   stopped inside a router before a route matched, such as a 401 from the
+//   login check on /api/orders/42 -> /api/orders/*
+//   no router at all          -> unmatched
+export function routeLabel(req) {
+  if (req.route) {
+    const path = req.route.path === "/" && req.baseUrl ? "" : req.route.path;
+
+    return `${req.baseUrl}${path}`;
+  }
+
+  return req.baseUrl ? `${req.baseUrl}/*` : "unmatched";
 }
 
 export async function metricsHandler(req, res) {
