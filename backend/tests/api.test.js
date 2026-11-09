@@ -806,3 +806,60 @@ test("the event stream only carries the partner's own restaurant", async () => {
 
   assert.equal(leaked, null);
 });
+
+async function metricsText() {
+  const response = await fetch(`${baseUrl}/metrics`);
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/plain/);
+
+  return response.text();
+}
+
+function metricValue(text, name, labels) {
+  const line = text
+    .split("\n")
+    .find((row) => row.startsWith(`${name}{`) && labels.every((label) => row.includes(label)));
+
+  return line ? Number(line.split(" ").pop()) : 0;
+}
+
+test("GET /metrics serves Prometheus metrics with route patterns, not raw URLs", async () => {
+  await api("/api/restaurants/1");
+  await api("/api/restaurants/2/menu");
+
+  const text = await metricsText();
+
+  assert.match(text, /swiggy_process_cpu_seconds_total/);
+  assert.match(text, /swiggy_http_request_duration_seconds_bucket\{/);
+  assert.match(text, /route="\/api\/restaurants\/:id"/);
+  assert.match(text, /route="\/api\/restaurants\/:id\/menu"/);
+  assert.doesNotMatch(text, /route="\/api\/restaurants\/1"/);
+  assert.match(text, /app="swiggy-backend"/);
+});
+
+test("order metrics count new orders and status changes", async () => {
+  const before = await metricsText();
+  const order = await placeOrder(customerToken);
+
+  await partnerStatus(order.id, staffToken, "CONFIRMED");
+
+  const after = await metricsText();
+
+  assert.equal(
+    metricValue(after, "swiggy_orders_created_total", ['restaurant_id="1"']) -
+      metricValue(before, "swiggy_orders_created_total", ['restaurant_id="1"']),
+    1
+  );
+  assert.equal(
+    metricValue(after, "swiggy_order_status_changes_total", ['status="CONFIRMED"', 'actor="partner"']) -
+      metricValue(before, "swiggy_order_status_changes_total", ['status="CONFIRMED"', 'actor="partner"']),
+    1
+  );
+});
+
+test("metrics are not served under /api, so the websites never expose them", async () => {
+  const response = await fetch(`${baseUrl}/api/metrics`);
+
+  assert.equal(response.status, 404);
+});

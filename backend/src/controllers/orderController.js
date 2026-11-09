@@ -2,6 +2,7 @@ import pool from "../db/pool.js";
 import { isValidId } from "../middleware/validateId.js";
 import { isPartner } from "../middleware/auth.js";
 import { canMove, isKnownStatus, ORDER_COLUMNS } from "../orders/statusFlow.js";
+import { orderStatusChanges, ordersCreated } from "../metrics.js";
 
 const MAX_ITEM_QUANTITY = 50;
 const MAX_ORDER_LINES = 50;
@@ -180,6 +181,9 @@ export async function createOrder(req, res) {
 
     await client.query("COMMIT");
 
+    ordersCreated.inc({ restaurant_id: String(restaurantId) });
+    orderStatusChanges.inc({ status: "PLACED", actor: "customer" });
+
     res.status(201).json({
       message: "Order created successfully",
       order
@@ -343,6 +347,8 @@ export async function updateOrderStatus(req, res) {
         error: "Order status has already changed"
       });
     }
+
+    orderStatusChanges.inc({ status, actor: "customer" });
 
     res.status(200).json({
       message: "Order status updated successfully",

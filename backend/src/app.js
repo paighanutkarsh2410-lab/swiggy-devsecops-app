@@ -7,6 +7,7 @@ import authRoutes from "./routes/authRoutes.js";
 import restaurantRoutes from "./routes/restaurantRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import partnerRoutes from "./routes/partnerRoutes.js";
+import { metricsHandler, metricsMiddleware } from "./metrics.js";
 
 const app = express();
 
@@ -18,6 +19,7 @@ const allowedOrigins = (process.env.CORS_ORIGIN || "")
 // Requests arrive through one Nginx proxy.
 app.set("trust proxy", 1);
 
+app.use(metricsMiddleware);
 app.use(helmet());
 app.use(cors({ origin: allowedOrigins.length > 0 ? allowedOrigins : false }));
 app.use(express.json({ limit: "100kb" }));
@@ -35,6 +37,9 @@ app.get("/", (req, res) => {
     version: "1.0.0"
   });
 });
+
+// Prometheus metrics. Outside /api, so the websites' Nginx never serves it.
+app.get("/metrics", metricsHandler);
 
 app.get("/health", (req, res) => {
   res.status(200).json({

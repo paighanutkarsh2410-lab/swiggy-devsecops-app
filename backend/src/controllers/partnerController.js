@@ -3,6 +3,7 @@
 // exactly one restaurant, and every query is limited to that restaurant.
 import pool from "../db/pool.js";
 import { subscribeToRestaurant } from "../events/orderEvents.js";
+import { orderStatusChanges, partnerEventStreams } from "../metrics.js";
 import {
   ACTIVE_STATUSES,
   canMove,
@@ -192,6 +193,8 @@ export async function updateOrderStatus(req, res) {
     }
 
     const order = result.rows[0];
+
+    orderStatusChanges.inc({ status, actor: "partner" });
 
     res.status(200).json({
       message: "Order status updated successfully",
@@ -401,8 +404,11 @@ export async function streamOrderEvents(req, res) {
   let unsubscribe = () => {};
   const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), HEARTBEAT_MS);
 
+  partnerEventStreams.inc();
+
   req.on("close", () => {
     closed = true;
+    partnerEventStreams.dec();
     clearInterval(heartbeat);
     unsubscribe();
   });
