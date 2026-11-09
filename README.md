@@ -35,16 +35,41 @@ flowchart LR
     Test --> Build[Lint and build both frontends]
     Build --> Images[Build 3 Docker images]
     Images --> ImageScan[Trivy image scans]
-    ImageScan --> GHCR[Publish to GHCR]
-    GHCR --> InfraPR[Open deploy PR in infra repo]
-    InfraPR --> Argo[Merged: Argo CD deploys]
+    ImageScan --> ZAP[OWASP ZAP scan of the running app]
+    ZAP --> SBOM[Syft SBOMs]
+    SBOM --> GHCR[Publish to GHCR]
+    GHCR --> Sign[cosign: sign + attest SBOM]
+    Sign --> InfraPR[Open deploy PR pinned by digest]
+    InfraPR --> Verify[Infra CI verifies signatures]
+    Verify --> Argo[Merged: Argo CD deploys]
 ```
 
 Trivy fails the build on any fixable HIGH or CRITICAL finding, and images are only published from `main` after every scan passes. CodeQL analyses the code on each pull request, and Dependabot opens weekly update pull requests.
 
+### Supply-chain security
+
+- **Dynamic scan (DAST).** Before anything is published, `.github/scripts/dast.sh` starts the freshly built images with Docker Compose and runs the [OWASP ZAP](https://www.zaproxy.org/) baseline scan against both websites, crawling the JavaScript pages too. Any alert not explained in [`.github/dast/rules.tsv`](.github/dast/rules.tsv) fails the build; the HTML and JSON reports are kept as the `zap-reports` artifact of each run. Its first run found no Content Security Policy, missing clickjacking and cross-origin headers and the Nginx version in responses. Both sites now send a strict same-origin CSP and the other headers from `security-headers.conf`, with fonts bundled instead of loaded from Google.
+- **SBOMs.** [Syft](https://github.com/anchore/syft) lists every package in each image as a CycloneDX SBOM, kept as the `sboms` artifact of every run.
+- **Signed images.** On `main`, each image is signed by digest with [cosign](https://github.com/sigstore/cosign) keyless signing: GitHub's OIDC token gets a short-lived certificate from Sigstore that names this repository's `ci.yml` workflow on `main`, and the signature is recorded in Sigstore's public transparency log. Each image's SBOM is attached as a signed attestation. There are no signing keys to store or leak.
+- **Deploy by digest.** The deploy pull request pins each image's sha256 digest, and the infra repo's CI refuses images that are not signed by this workflow on `main`.
+- **Pinned actions.** Every GitHub Action is pinned to a full commit SHA, so a moved or compromised tag cannot change what CI runs. Dependabot updates the pins.
+
+Check an image yourself (needs cosign):
+
+```bash
+cosign verify \
+  --certificate-identity https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-app/.github/workflows/ci.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-backend:<commit-sha>
+```
+
+`cosign verify-attestation --type cyclonedx` with the same flags checks the SBOM attestation and prints it.
+
+Known limitation: both websites keep the login token in `localStorage`, where an XSS bug could read it. The strict CSP makes that much harder, and moving the token to an HttpOnly cookie is the planned fix.
+
 ### Deployment (GitOps)
 
-This repo never deploys anything itself. After the images are published, CI opens a pull request in [swiggy-devsecops-infra](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-infra) that sets the new image tag. Merging that pull request is the deployment: Argo CD rolls it out to the Kubernetes cluster, and reverting it rolls back. See the infra repo's README for the full flow.
+This repo never deploys anything itself. After the images are published and signed, CI opens a pull request in [swiggy-devsecops-infra](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-infra) that sets the new image tag and digests. Merging that pull request is the deployment: Argo CD rolls it out to the Kubernetes cluster, and reverting it rolls back. See the infra repo's README for the full flow.
 
 The job needs a token that can open pull requests in the infra repo. Without it the job does nothing and says so. To set it up:
 
@@ -65,7 +90,7 @@ The job needs a token that can open pull requests in the infra repo. Without it 
 | Frontends | React, Vite, React Router, Nginx |
 | Backend | Node.js, Express, PostgreSQL (LISTEN/NOTIFY), Server-Sent Events |
 | Containers | Docker, Docker Compose, GHCR |
-| CI and security | GitHub Actions, Trivy, CodeQL, Dependabot |
+| CI and security | GitHub Actions, Trivy, CodeQL, Dependabot, OWASP ZAP, Syft, cosign (Sigstore) |
 
 ## Run it locally
 
@@ -193,3 +218,4 @@ Every metric carries `app="swiggy-backend"`.
 - [x] AWS deployment on K3s
 - [x] GitOps with Helm and Argo CD
 - [x] Monitoring with Prometheus and Grafana ([on kind](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-infra#monitoring), on demand)
+- [x] Supply-chain security: SBOMs, signed images deployed by digest, OWASP ZAP, pinned actions

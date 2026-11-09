@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+# Every action is pinned to a full commit SHA, so a moved or compromised tag
+# cannot change what runs here. Dependabot keeps the pins up to date.
+
 jobs:
   test-and-build:
     name: Backend Tests and Frontend Build
@@ -42,15 +45,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
       - name: Scan repository with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -104,16 +107,24 @@ jobs:
     runs-on: ubuntu-latest
     needs: test-and-build
     permissions:
-        contents: read
-        packages: write
+      contents: read
+      packages: write
+      # Keyless signing: cosign exchanges the job's GitHub OIDC token for a
+      # short-lived Sigstore certificate. Only used on pushes to main.
+      id-token: write
     env:
       BACKEND_IMAGE: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-backend
       FRONTEND_IMAGE: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-frontend
       PARTNER_IMAGE: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-partner
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    outputs:
+      backend-digest: ${{ steps.publish.outputs.backend-digest }}
+      frontend-digest: ${{ steps.publish.outputs.frontend-digest }}
+      partner-digest: ${{ steps.publish.outputs.partner-digest }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build backend image
         run: |
@@ -137,7 +148,7 @@ jobs:
             -f frontend-partner/Dockerfile frontend-partner
 
       - name: Scan backend image with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-backend:${{ github.sha }}
@@ -148,7 +159,7 @@ jobs:
           exit-code: '1'
 
       - name: Scan frontend image with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-frontend:${{ github.sha }}
@@ -159,7 +170,7 @@ jobs:
           exit-code: '1'
 
       - name: Scan partner console image with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ghcr.io/paighanutkarsh2410-lab/swiggy-devsecops-partner:${{ github.sha }}
@@ -169,23 +180,114 @@ jobs:
           format: table
           exit-code: '1'
 
+      # DAST: run the images just built and scan both websites with OWASP ZAP.
+      - name: Scan the running app with OWASP ZAP
+        run: bash .github/scripts/dast.sh "$GITHUB_SHA"
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-reports
+          path: zap-reports/
+          if-no-files-found: ignore
+
+      # SBOM: every package in each image, in CycloneDX format, made by Syft.
+      - name: Create the SBOM folder
+        run: mkdir -p sboms
+
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sboms/backend.cdx.json
+          upload-artifact: false
+
+      - name: Generate frontend SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sboms/frontend.cdx.json
+          upload-artifact: false
+
+      - name: Generate partner console SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.PARTNER_IMAGE }}:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sboms/partner.cdx.json
+          upload-artifact: false
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sboms
+          path: sboms/
+
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v4
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish images to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: publish
+        if: env.PUBLISH == 'true'
         run: |
-          docker push "$BACKEND_IMAGE:$GITHUB_SHA"
-          docker push "$BACKEND_IMAGE:latest"
-          docker push "$FRONTEND_IMAGE:$GITHUB_SHA"
-          docker push "$FRONTEND_IMAGE:latest"
-          docker push "$PARTNER_IMAGE:$GITHUB_SHA"
-          docker push "$PARTNER_IMAGE:latest"
+          for name in backend frontend partner; do
+            var="${name^^}_IMAGE"; image="${!var}"
+            docker push -q "$image:$GITHUB_SHA"
+            docker push -q "$image:latest"
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$GITHUB_SHA" | cut -d@ -f2)
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "$name: $image@$digest"
+            echo "$name-digest=$digest" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Install cosign
+        if: env.PUBLISH == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      # Signs each image by digest and attaches its SBOM as a signed
+      # attestation. The signature records this workflow and commit, and is
+      # logged in Sigstore's public transparency log (Rekor).
+      - name: Sign images and attest SBOMs
+        if: env.PUBLISH == 'true'
+        env:
+          BACKEND_DIGEST: ${{ steps.publish.outputs.backend-digest }}
+          FRONTEND_DIGEST: ${{ steps.publish.outputs.frontend-digest }}
+          PARTNER_DIGEST: ${{ steps.publish.outputs.partner-digest }}
+        run: |
+          for name in backend frontend partner; do
+            image_var="${name^^}_IMAGE"; digest_var="${name^^}_DIGEST"
+            ref="${!image_var}@${!digest_var}"
+            cosign sign --yes "$ref"
+            cosign attest --yes --type cyclonedx --predicate "sboms/$name.cdx.json" "$ref"
+          done
+
+      - name: Verify the signatures and SBOM attestations
+        if: env.PUBLISH == 'true'
+        env:
+          BACKEND_DIGEST: ${{ steps.publish.outputs.backend-digest }}
+          FRONTEND_DIGEST: ${{ steps.publish.outputs.frontend-digest }}
+          PARTNER_DIGEST: ${{ steps.publish.outputs.partner-digest }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/ci.yml@refs/heads/main
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          for name in backend frontend partner; do
+            image_var="${name^^}_IMAGE"; digest_var="${name^^}_DIGEST"
+            ref="${!image_var}@${!digest_var}"
+            cosign verify --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" "$ref" >/dev/null
+            cosign verify-attestation --type cyclonedx \
+              --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" "$ref" >/dev/null
+            echo "$name: signature and SBOM attestation verified"
+          done
 
   propose-deploy:
     name: Propose Deployment to Infra Repo
@@ -212,13 +314,13 @@ jobs:
 
       - name: Checkout this repository
         if: steps.token.outputs.present == 'true'
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: app
 
       - name: Checkout the infra repository
         if: steps.token.outputs.present == 'true'
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: paighanutkarsh2410-lab/swiggy-devsecops-infra
           token: ${{ secrets.INFRA_REPO_TOKEN }}
@@ -228,4 +330,7 @@ jobs:
         if: steps.token.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ secrets.INFRA_REPO_TOKEN }}
+          BACKEND_DIGEST: ${{ needs.container-security.outputs.backend-digest }}
+          FRONTEND_DIGEST: ${{ needs.container-security.outputs.frontend-digest }}
+          PARTNER_DIGEST: ${{ needs.container-security.outputs.partner-digest }}
         run: bash app/.github/scripts/propose-infra-deploy.sh infra "$GITHUB_SHA"
