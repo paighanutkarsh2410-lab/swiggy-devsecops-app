@@ -1,8 +1,49 @@
 # Swiggy DevSecOps App
 
-A food delivery demo used as the workload for an end-to-end DevSecOps project. The app itself is deliberately small. The focus is on how code is tested, scanned, packaged and delivered.
+[![CI](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-app/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-app/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-app/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-app/actions/workflows/codeql.yml)
+![Images signed with cosign](https://img.shields.io/badge/images-signed%20with%20cosign-2e7d32)
+![SBOM: CycloneDX](https://img.shields.io/badge/SBOM-CycloneDX-1565c0)
+![DAST: OWASP ZAP](https://img.shields.io/badge/DAST-OWASP%20ZAP-6a1b9a)
+
+A food delivery app, with a customer website and a restaurant partner console, used as the workload for an end-to-end DevSecOps project. The app is deliberately small; the focus is on how code is tested, scanned, signed and delivered.
+
+Its Kubernetes, GitOps and cloud side lives in [swiggy-devsecops-infra](https://github.com/paighanutkarsh2410-lab/swiggy-devsecops-infra).
 
 This is a personal learning project and is not affiliated with Swiggy.
+
+## Highlights
+
+- **Two real websites on one API:** customers order and track; restaurants accept orders, set preparation times and manage the menu. Every role is enforced on the server.
+- **Live orders:** PostgreSQL `LISTEN/NOTIFY` and Server-Sent Events push new orders to the partner console, across any number of API replicas.
+- **Security gates in CI:** Trivy (code and images), CodeQL, backend tests and an OWASP ZAP scan of the running app must all pass before anything is published.
+- **Supply chain:** each image gets a CycloneDX SBOM, is signed keylessly with cosign, and is deployed by sha256 digest. The infra repo refuses unsigned images.
+- **GitOps delivery:** CI never deploys. It opens a pull request in the infra repo, and merging it is the deployment, through Argo CD.
+
+## Screenshots
+
+Taken from the app running on a local kind cluster, deployed by Argo CD.
+
+| Customer app | Partner console |
+|---|---|
+| ![Restaurant list on the customer app](docs/images/customer-home.png) | ![Live orders board on the partner console](docs/images/partner-orders.png) |
+| **Restaurants**, with search and cuisine filters | **Live orders**: new orders arrive without a reload; accept with a preparation time and move them along |
+| ![Restaurant menu with a cart](docs/images/customer-restaurant.png) | ![Menu management on the partner console](docs/images/partner-menu.png) |
+| **Menu and cart** | **Menu management**: owners add, edit and remove items; staff mark them sold out |
+| ![Order tracking page](docs/images/customer-order.png) | ![GitHub Actions pipeline run](docs/images/ci-pipeline.png) |
+| **Order tracking**, with the restaurant's ready-by time | **CI pipeline** on `main`: tests, scans, ZAP, SBOMs, signing and the deploy pull request |
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `backend/` | Express API, database schema and migrations, tests |
+| `frontend/` | Customer app (React + Vite), served by Nginx |
+| `frontend-partner/` | Partner console (React + Vite), served by Nginx |
+| `docker-compose.yml` | The whole stack for local development |
+| `.github/workflows/` | CI (`ci.yml`) and CodeQL |
+| `.github/scripts/` | The ZAP scan and the infra deploy pull request |
+| `.github/dast/rules.tsv` | ZAP alerts that are accepted, each with its reason |
 
 ## Architecture
 
@@ -203,6 +244,17 @@ The API serves Prometheus metrics at `GET /metrics` on port 3000. The path is ou
 | `swiggy_process_*`, `swiggy_nodejs_*` | Various | CPU, memory, event loop lag and garbage collection |
 
 Every metric carries `app="swiggy-backend"`.
+
+## Design decisions
+
+| Decision | Why |
+|---|---|
+| Server-Sent Events, not WebSockets, for live orders | Updates only flow from server to browser. SSE is plain HTTP, works through Nginx with buffering off, and reconnects simply. |
+| PostgreSQL `LISTEN/NOTIFY` between API replicas | The database already sees every order, so no extra message broker is needed, and events reach every replica. |
+| Separate images for the two websites | They can be released, scaled and locked down independently; the partner console sends `X-Robots-Tag` and a stricter referrer policy. |
+| Bearer token in `localStorage` | Simple and explicit. The trade-off is that an XSS bug could read it, so XSS is defended in depth: strict same-origin CSP with no inline scripts, React escaping and no raw HTML, CodeQL and ZAP in CI, 8-hour tokens. HttpOnly cookies would trade that for CSRF handling and, with both sites on one host, separate cookies per site. |
+| Keyless signing instead of a signing key | Nothing secret to store or rotate. The signature proves which workflow, branch and commit built the image, and is publicly logged. |
+| Deploy by digest, keep the tag | The digest guarantees the exact bytes that were scanned and signed; the commit SHA tag keeps it readable. |
 
 ## Project status
 
