@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth/context";
 import { api } from "./services/api";
 import Login from "./pages/Login";
@@ -51,6 +51,7 @@ function OpenToggle() {
 
 function Shell({ children, live }) {
   const { user, restaurant, logout } = useAuth();
+  const onOrders = useLocation().pathname === "/";
 
   return (
     <div className="shell">
@@ -73,9 +74,12 @@ function Shell({ children, live }) {
         </nav>
 
         <div className="sidebar-foot">
-          <span className={`live-indicator ${live ? "on" : ""}`}>
-            <span className="dot" /> {live ? "Live updates on" : "Reconnecting..."}
-          </span>
+          {/* The live order stream runs on the Orders page only. */}
+          {onOrders && (
+            <span className={`live-indicator ${live ? "on" : ""}`}>
+              <span className="dot" /> {live ? "Live updates on" : "Reconnecting..."}
+            </span>
+          )}
           <div className="user-chip">
             <strong>{user.name}</strong>
             <span>{user.role === "OWNER" ? "Owner" : "Staff"}</span>
